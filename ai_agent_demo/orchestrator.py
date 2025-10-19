@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, List, Sequence
 
+import pandas as pd
+
 from .agents.base import Agent
 from .agents.data_analysis import AnalysisReport, DataAnalysisAgent
 from .agents.data_extraction import DataExtractionAgent
@@ -51,11 +53,11 @@ class AgentOrchestrator:
                 else:
                     agent.run()  # type: ignore[call-arg]
 
-            dataframe_preview = dataframe.head().to_markdown() if dataframe is not None else ""
+            dataframe_preview = self._render_dataframe_preview(dataframe)
             debug_message = None
 
         except Exception as exc:  # noqa: BLE001 - centralised error handling
-            dataframe_preview = dataframe.head().to_markdown() if dataframe is not None else ""
+            dataframe_preview = self._render_dataframe_preview(dataframe)
             analysis_report = None
             visualization_paths = []
             debug_message = self.debugger.run(error=exc)
@@ -70,3 +72,16 @@ class AgentOrchestrator:
     def iter_agents(self) -> Iterable[Agent]:
         yield from self.agents
         yield self.debugger
+
+    @staticmethod
+    def _render_dataframe_preview(dataframe: pd.DataFrame | None) -> str:
+        if dataframe is None:
+            return ""
+
+        head = dataframe.head()
+        try:
+            return head.to_markdown()
+        except ImportError:
+            return head.to_string()
+        except Exception:
+            return head.to_string()

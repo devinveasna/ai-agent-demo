@@ -32,6 +32,8 @@ ai_agent_demo/
 
    The command prints a DataFrame preview, a Markdown-formatted analysis report, and a list of generated visualization files. Histograms are always produced for each numeric column, and a scatter plot is created for the first two numeric columns when available.
 
+   > **Note:** Pandas relies on the optional [`tabulate`](https://pypi.org/project/tabulate/) package to render the preview in Markdown. If `tabulate` is not installed, the orchestrator falls back to a plain-text table so the demo continues to run without extra dependencies.
+
 ## Extending the demo
 
 - Swap deterministic agents with LLM-backed implementations.
