@@ -1,12 +1,15 @@
 """Agent that performs lightweight exploratory data analysis."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from textwrap import dedent
 from typing import Any, Dict
 
 import pandas as pd
 
 from .base import Agent, AgentError
+from ..llm import LLMSettings
 
 
 @dataclass
@@ -29,6 +32,21 @@ class DataAnalysisAgent(Agent):
 
     name = "data_analysis"
 
+    def __init__(
+        self,
+        *,
+        llm_settings: LLMSettings | None = None,
+        llm_temperature: float = 0.2,
+    ) -> None:
+        super().__init__()
+        self.llm_settings = llm_settings
+        self.llm_temperature = llm_temperature
+        self._llm_client, self._init_warnings = (
+            self.llm_settings.create_client()
+            if self.llm_settings is not None
+            else (None, [])
+        )
+
     def run(self, *, dataframe: pd.DataFrame | None = None, **_: Any) -> AnalysisReport:
         if dataframe is None:
             raise AgentError("DataFrame required for analysis.", agent_name=self.name)
@@ -48,14 +66,21 @@ class DataAnalysisAgent(Agent):
         else:
             summary["numeric_summary"] = "No numeric columns detected."
 
-        recommendations = self._generate_recommendations(numeric_columns, categorical_columns)
+        recommendations = self._generate_recommendations(
+            numeric_columns,
+            categorical_columns,
+            summary,
+        )
 
         report = AnalysisReport(summary=summary, recommendations=recommendations)
         self.update_context(report=report)
         return report
 
     def _generate_recommendations(
-        self, numeric_columns: pd.DataFrame, categorical_columns: pd.DataFrame
+        self,
+        numeric_columns: pd.DataFrame,
+        categorical_columns: pd.DataFrame,
+        summary: Dict[str, Any],
     ) -> str:
         if numeric_columns.empty and categorical_columns.empty:
             return "No data available for generating recommendations."
@@ -69,4 +94,48 @@ class DataAnalysisAgent(Agent):
         if not categorical_columns.empty:
             recs.append("Bar charts can show the frequency distribution of categorical features.")
 
-        return " \n".join(recs)
+        recommendations = " \n".join(recs)
+
+        if self._llm_client is None or self.llm_settings is None:
+            if self._init_warnings:
+                recommendations += "\n\nLLM insights unavailable: " + " ".join(self._init_warnings)
+            return recommendations
+
+        payload = {
+            "summary": summary,
+            "numeric_columns": list(numeric_columns.columns),
+            "categorical_columns": list(categorical_columns.columns),
+        }
+        system_prompt = dedent(
+            """
+            You are a data science co-pilot. Provide two to three short, actionable
+            exploratory analysis ideas tailored to the provided dataset profile.
+            Emphasise visual analysis techniques that would guide a researcher.
+            Keep the response under 120 words.
+            """
+        ).strip()
+
+        try:  # pragma: no cover - requires external LLM
+            response = self._llm_client.chat.completions.create(
+                model=self.llm_settings.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": "Dataset profile:" + json.dumps(payload, default=str),
+                    },
+                ],
+                temperature=self.llm_temperature,
+            )
+            llm_message = response.choices[0].message  # type: ignore[index]
+            llm_content = getattr(llm_message, "content", None)
+        except Exception as exc:  # pragma: no cover - connection failures
+            llm_content = None
+            recommendations += f"\n\nLLM insight unavailable: {exc}"
+        else:
+            if llm_content:
+                recommendations += "\n\nLLM insight:\n" + llm_content.strip()
+            elif self._init_warnings:
+                recommendations += "\n\nLLM insight unavailable: " + " ".join(self._init_warnings)
+
+        return recommendations

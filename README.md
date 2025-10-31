@@ -13,6 +13,7 @@ ai_agent_demo/
 │   ├── chart_planning.py       # Suggests charts via heuristics or an optional LLM
 │   ├── data_visualization.py   # Builds charts from the planner's recommendations
 │   └── debugging.py            # Produces human-friendly debugging tips
+├── llm.py                      # Shared helpers for configuring OpenAI-compatible clients
 ├── orchestrator.py             # Coordinates the agents into a pipeline
 └── main.py                     # CLI entrypoint for running the demo
 ```
@@ -35,20 +36,49 @@ ai_agent_demo/
 
    > **Note:** Pandas relies on the optional [`tabulate`](https://pypi.org/project/tabulate/) package to render the preview in Markdown. If `tabulate` is not installed, the orchestrator falls back to a plain-text table so the demo continues to run without extra dependencies.
 
-### Using an LLM to plan charts
+### Putting LLMs in the loop
 
-The planner can delegate chart selection to an OpenAI-compatible chat model. Install the optional dependency and provide an API key:
+Each agent can optionally call an OpenAI-compatible chat endpoint. This works both for hosted services (OpenAI, Azure OpenAI, Anthropic's compatibility layer, etc.) and for local servers that expose the same API surface (LM Studio, llama.cpp's REST mode, Ollama, vLLM, and so on).
 
-```bash
-pip install openai
-export OPENAI_API_KEY=sk-...
-python -m ai_agent_demo.main path/to/data.csv --llm-model gpt-4o-mini
-```
+1. Install the extra dependency:
 
-Additional options:
+   ```bash
+   pip install openai
+   ```
 
-- `--llm-temperature` adjusts how adventurous the LLM is when proposing chart types (default: `0.2`).
-- Planner warnings (for example missing columns suggested by the LLM) are surfaced beneath the plan in the CLI output.
+2. Provide connection details:
+
+   ```bash
+   export OPENAI_API_KEY=sk-...              # or pass --llm-api-key
+   export LLM_BASE_URL="http://localhost:11434/v1"  # optional, for local servers
+   ```
+
+3. Enable the agents you want to augment:
+
+   ```bash
+   python -m ai_agent_demo.main \
+       path/to/data.csv \
+       --output-dir charts/ \
+       --planner-llm-model llama3 \
+       --analysis-llm-model llama3 \
+       --debug-llm-model llama3 \
+       --llm-base-url "http://localhost:11434/v1" \
+       --llm-api-key "EMPTY"  # many local servers ignore the key but the client requires a value
+   ```
+
+   Use `--planner-llm-temperature`, `--analysis-llm-temperature`, and `--debug-llm-temperature` to tune sampling for each agent. `--planner-max-charts` controls how many visualizations the planner may request from the LLM.
+
+Behind the scenes:
+
+- **Planner (`ChartPlanningAgent`)** sends the dataset schema, sample rows, and analysis summary to the LLM and expects a JSON chart plan. If the LLM call fails, the agent reverts to heuristics and surfaces warnings.
+- **Analysis (`DataAnalysisAgent`)** still computes deterministic statistics but can ask the LLM for follow-up exploration ideas tailored to the dataset profile.
+- **Debugging (`DebuggingAgent`)** can summarise failures and propose remediation steps using the configured model.
+
+All LLM calls are optional. When a client cannot be created (missing dependency, offline server, invalid credentials) the agents log a warning in the CLI output and continue with deterministic fallbacks.
+
+### Running against a remote GPU cluster later
+
+Once you're ready to move from a local workstation to a beefier GPU (e.g., an A100 40G), simply point `--llm-base-url` at the remote deployment and supply its credentials. No code changes are required because the demo already targets the standard OpenAI-compatible chat-completions interface.
 
 ## Extending the demo
 

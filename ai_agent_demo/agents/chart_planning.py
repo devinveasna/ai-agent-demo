@@ -10,6 +10,7 @@ import pandas as pd
 
 from .base import Agent, AgentError
 from .data_analysis import AnalysisReport
+from ..llm import LLMSettings
 
 try:  # pragma: no cover - optional dependency
     from openai import OpenAI  # type: ignore
@@ -68,18 +69,29 @@ class ChartPlanningAgent(Agent):
         self,
         *,
         llm_model: str | None = None,
+        llm_settings: LLMSettings | None = None,
         temperature: float = 0.2,
         max_charts: int = 6,
     ) -> None:
         super().__init__()
-        self.llm_model = llm_model
+        if llm_model and llm_settings:
+            raise ValueError("Specify either llm_model or llm_settings, not both.")
+
+        self.llm_settings = llm_settings or (
+            LLMSettings(model=llm_model) if llm_model else None
+        )
+        self.llm_model = self.llm_settings.model if self.llm_settings else llm_model
         self.temperature = temperature
         self.max_charts = max_charts
         self._llm_client: Any | None = None
-        if llm_model and OpenAI is not None:
+        self._init_warnings: list[str] = []
+        if self.llm_settings is not None:
+            self._llm_client, self._init_warnings = self.llm_settings.create_client()
+        elif self.llm_model and OpenAI is not None:
             try:  # pragma: no cover - network interactions are optional
                 self._llm_client = OpenAI()
-            except Exception:  # pragma: no cover
+            except Exception as exc:  # pragma: no cover
+                self._init_warnings.append(f"Failed to initialise OpenAI client: {exc}")
                 self._llm_client = None
 
     def run(
@@ -92,6 +104,8 @@ class ChartPlanningAgent(Agent):
         if dataframe is None:
             raise AgentError("DataFrame required for chart planning.", agent_name=self.name)
 
+        warnings = list(self._init_warnings)
+
         if self.llm_model:
             plan = self._attempt_llm_plan(dataframe=dataframe, analysis_report=analysis_report)
         else:
@@ -101,7 +115,11 @@ class ChartPlanningAgent(Agent):
             fallback = self._heuristic_plan(dataframe=dataframe)
             if plan is not None and plan.warnings:
                 fallback.warnings.extend(plan.warnings)
+            if warnings:
+                fallback.warnings.extend(warnings)
             plan = fallback
+        elif warnings and plan is not None:
+            plan.warnings.extend(warnings)
 
         self.update_context(plan=plan)
         return plan
@@ -116,7 +134,7 @@ class ChartPlanningAgent(Agent):
         analysis_report: AnalysisReport | None,
     ) -> ChartPlan | None:
         if self._llm_client is None:
-            warning = "LLM model configured but OpenAI client unavailable; falling back to heuristics."
+            warning = "LLM model configured but client unavailable; falling back to heuristics."
             return ChartPlan(charts=[], source="heuristic", warnings=[warning])
 
         schema_lines = [
