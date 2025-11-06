@@ -9,7 +9,7 @@ import pandas as pd
 from .agents.base import Agent
 from .agents.data_analysis import AnalysisReport, DataAnalysisAgent
 from .agents.data_extraction import DataExtractionAgent
-from .agents.data_visualization import DataVisualizationAgent
+from .agents.data_visualization import DataVisualizationAgent, VisualizationRequest
 from .agents.debugging import DebuggingAgent
 
 
@@ -34,7 +34,13 @@ class AgentOrchestrator:
     )
     debugger: DebuggingAgent = field(default_factory=DebuggingAgent)
 
-    def run(self, *, file_path: str, output_dir: str) -> OrchestratorResult:
+    def run(
+        self,
+        *,
+        file_path: str,
+        output_dir: str,
+        visualization_requests: Sequence[VisualizationRequest] | None = None,
+    ) -> OrchestratorResult:
         dataframe = None
         analysis_report: AnalysisReport | None = None
         visualization_paths: List[str] = []
@@ -48,7 +54,11 @@ class AgentOrchestrator:
                 elif isinstance(agent, DataVisualizationAgent):
                     visualization_paths = [
                         str(path)
-                        for path in agent.run(dataframe=dataframe, output_dir=output_dir)
+                        for path in agent.run(
+                            dataframe=dataframe,
+                            output_dir=output_dir,
+                            requests=visualization_requests,
+                        )
                     ]
                 else:
                     agent.run()  # type: ignore[call-arg]
