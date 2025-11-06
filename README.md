@@ -24,7 +24,7 @@ ai_agent_demo/
    pip install -r requirements.txt
    ```
 
-2. **Run the demo**
+2. **Run the CLI demo**
 
    ```bash
    python -m ai_agent_demo.main path/to/data.csv --output-dir charts/
@@ -33,6 +33,16 @@ ai_agent_demo/
    The command prints a DataFrame preview, a Markdown-formatted analysis report, and a list of generated visualization files. Histograms are always produced for each numeric column, and a scatter plot is created for the first two numeric columns when available.
 
    > **Note:** Pandas relies on the optional [`tabulate`](https://pypi.org/project/tabulate/) package to render the preview in Markdown. If `tabulate` is not installed, the orchestrator falls back to a plain-text table so the demo continues to run without extra dependencies.
+
+3. **Launch the Streamlit UI (optional)**
+
+   A simple Streamlit front-end is provided for exploring the agents without using the command line.
+
+   ```bash
+   streamlit run streamlit_app.py
+   ```
+
+   From the Streamlit dashboard you can upload your own CSV/TSV/TXT file or toggle the bundled `sample.csv`, choose which histograms and scatter plots to generate, and let the orchestrator display the resulting analysis and charts directly in the browser. Visualizations are saved to the directory you specify in the sidebar so that you can download or reuse them later.
 
 ## Extending the demo
 
