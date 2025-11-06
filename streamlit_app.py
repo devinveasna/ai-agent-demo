@@ -7,6 +7,7 @@ from typing import List
 
 import pandas as pd
 import streamlit as st
+from PIL import Image
 
 from ai_agent_demo.agents.data_visualization import VisualizationRequest
 from ai_agent_demo.orchestrator import AgentOrchestrator
@@ -44,18 +45,23 @@ def _load_sample_dataset() -> tuple[pd.DataFrame, Path]:
     return dataframe, sample_path
 
 
+MAX_INLINE_IMAGE_WIDTH = 800
+
+
 def build_visualization_requests(
     *,
     histogram_columns: List[str],
-    scatter_pair: tuple[str, str] | None,
+    scatter_pairs: List[tuple[str, str]],
 ) -> List[VisualizationRequest]:
     requests: List[VisualizationRequest] = []
     for column in histogram_columns:
         requests.append(VisualizationRequest(chart_type="histogram", columns=[column]))
 
-    if scatter_pair and scatter_pair[0] != scatter_pair[1]:
+    for x_column, y_column in scatter_pairs:
+        if x_column == y_column:
+            continue
         requests.append(
-            VisualizationRequest(chart_type="scatter", columns=[scatter_pair[0], scatter_pair[1]])
+            VisualizationRequest(chart_type="scatter", columns=[x_column, y_column])
         )
 
     return requests
@@ -100,33 +106,61 @@ if not numeric_columns:
 st.sidebar.header("Visualization preferences")
 st.sidebar.write("Choose the charts you want the visualization agent to create.")
 
-default_hist_columns = numeric_columns[: min(3, len(numeric_columns))]
-histogram_columns = st.sidebar.multiselect(
-    "Columns for histograms",
-    options=numeric_columns,
-    default=default_hist_columns,
-    help="Histograms help inspect the distribution of individual numeric columns.",
+chart_type_options: list[tuple[str, str]] = []
+if numeric_columns:
+    chart_type_options.append(("Histograms", "histogram"))
+if len(numeric_columns) >= 2:
+    chart_type_options.append(("Scatter plots", "scatter"))
+
+if not chart_type_options:
+    st.sidebar.info("No supported chart types available for the detected data.")
+    st.stop()
+
+default_selected_labels = [label for label, _ in chart_type_options]
+selected_chart_labels = st.sidebar.multiselect(
+    "Visualization types", [label for label, _ in chart_type_options], default=default_selected_labels
 )
 
-scatter_pair: tuple[str, str] | None = None
-if len(numeric_columns) >= 2:
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Scatter plot")
-    scatter_enabled = st.sidebar.checkbox(
-        "Generate a scatter plot",
-        value=len(numeric_columns) >= 2,
-        help="Scatter plots show relationships between two numeric columns.",
+selected_chart_types = {value for label, value in chart_type_options if label in selected_chart_labels}
+
+histogram_columns: list[str] = []
+if "histogram" in selected_chart_types:
+    default_hist_columns = numeric_columns[: min(3, len(numeric_columns))]
+    histogram_columns = st.sidebar.multiselect(
+        "Columns for histograms",
+        options=numeric_columns,
+        default=default_hist_columns,
+        help="Histograms help inspect the distribution of individual numeric columns.",
     )
-    if scatter_enabled:
-        x_column = st.sidebar.selectbox("X-axis", numeric_columns, index=0)
-        y_options = [col for col in numeric_columns if col != x_column]
-        if y_options:
-            y_column = st.sidebar.selectbox("Y-axis", y_options, index=0)
-            scatter_pair = (x_column, y_column)
+
+scatter_pairs: list[tuple[str, str]] = []
+if "scatter" in selected_chart_types:
+    if len(numeric_columns) < 2:
+        st.sidebar.info("At least two numeric columns are required for scatter plots.")
+    else:
+        from itertools import permutations
+
+        scatter_pair_options = [
+            (f"{x} vs {y}", (x, y)) for x, y in permutations(numeric_columns, 2) if x != y
+        ]
+        if scatter_pair_options:
+            default_option_label = scatter_pair_options[0][0]
+            selected_pairs = st.sidebar.multiselect(
+                "Scatter plot combinations",
+                options=[label for label, _ in scatter_pair_options],
+                default=[default_option_label],
+                help="Select the combinations of numeric columns to compare in scatter plots.",
+            )
+            lookup = {label: pair for label, pair in scatter_pair_options}
+            scatter_pairs = [lookup[label] for label in selected_pairs if label in lookup]
         else:
-            st.sidebar.info("Select a different X-axis column to enable the Y-axis selection.")
-else:
-    st.sidebar.info("At least two numeric columns are required for scatter plots.")
+            st.sidebar.info(
+                "No unique scatter plot combinations available. Select additional numeric columns."
+            )
+
+if not histogram_columns and not scatter_pairs:
+    st.info("Select at least one visualization option to run the agents.")
+    st.stop()
 
 
 output_directory = st.sidebar.text_input(
@@ -144,7 +178,7 @@ if not run_pipeline:
 
 visualization_requests = build_visualization_requests(
     histogram_columns=histogram_columns,
-    scatter_pair=scatter_pair,
+    scatter_pairs=scatter_pairs,
 )
 
 orchestrator = AgentOrchestrator()
@@ -167,7 +201,21 @@ st.subheader("Generated visualizations")
 if result.visualization_paths:
     for path_str in result.visualization_paths:
         st.markdown(f"**{path_str}**")
-        st.image(path_str, use_column_width=True)
+        image_path = Path(path_str)
+        try:
+            with Image.open(image_path) as loaded_image:
+                image = loaded_image.copy()
+        except (FileNotFoundError, OSError) as exc:
+            st.warning(f"Unable to display visualization '{path_str}': {exc}")
+            continue
+
+        use_container_width = image.width > MAX_INLINE_IMAGE_WIDTH
+        display_width = None if use_container_width else image.width
+        st.image(
+            image,
+            use_container_width=use_container_width,
+            width=display_width,
+        )
 else:
     st.write("No visualizations were created. Adjust your selections and try again.")
 
